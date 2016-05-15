@@ -305,7 +305,7 @@ class _WSGIResponse:
         # The application object is entirely in control of response headers;
         # disable the default Content-Type value normally provided by
         # twisted.web.server.Request.
-        self.request.defaultContentType = None
+        self.request.setDefaultContentType(None)
 
         for name, values in request.requestHeaders.getAllRawHeaders():
             name = 'HTTP_' + _wsgiString(name).upper().replace('-', '_')
@@ -472,8 +472,8 @@ class _WSGIResponse:
         for name, value in self.headers:
             # Don't allow the application to control these required headers.
             if name.lower() not in ('server', 'date'):
-                self.request.responseHeaders.addRawHeader(
-                    _wsgiStringToBytes(name), _wsgiStringToBytes(value))
+                self.request.setHeader(_wsgiStringToBytes(name),
+                                       _wsgiStringToBytes(value))
 
 
     def start(self):
@@ -506,7 +506,7 @@ class _WSGIResponse:
             def wsgiError(started, type, value, traceback):
                 err(Failure(value, type, traceback), "WSGI application error")
                 if started:
-                    self.request.transport.loseConnection()
+                    self.request.loseConnection()
                 else:
                     self.request.setResponseCode(INTERNAL_SERVER_ERROR)
                     self.request.finish()

@@ -331,6 +331,39 @@ class Request(Copyable, http.Request, components.Componentized):
         return reason
 
 
+    def setDefaultContentType(self, contentType):
+        """
+        Local method to override this instance's defaultContentType
+        attribute; this exists to make a remote setDefaultContentType
+        call transparent.
+
+        @param contentType: A C{bytes} giving the default
+            I{Content-Type} value to send in responses if no other
+            value is set.  C{None} disables the default.
+        """
+        self.defaultContentType = contentType
+
+
+    def loseConnection(self):
+        """
+        Lose the underlying transport's connection; this exists to make a
+        remote loseConnection call transparent.
+        """
+        self.transport.loseConnection()
+
+
+    def view_setDefaultContentType(self, issuer, contentType):
+        """Remote version of setDefaultContentType; same interface.
+        """
+        self.defaultContentType = contentType
+
+
+    def view_loseConnection(self, issuer):
+        """Remote version of loseConnection; same interface.
+        """
+        self.transport.loseConnection()
+
+
     def view_write(self, issuer, data):
         """Remote version of write; same interface.
         """
@@ -383,6 +416,7 @@ class Request(Copyable, http.Request, components.Componentized):
 
     def view_unregisterProducer(self, issuer):
         self.unregisterProducer()
+
 
     ### these calls remain local
 

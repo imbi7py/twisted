@@ -47,6 +47,7 @@ class Request(pb.RemoteCopy, server.Request):
     A request which was received by a L{ResourceSubscription} and sent via
     PB to a distributed node.
     """
+
     def setCopyableState(self, state):
         """
         Initialize this L{twisted.web.distrib.Request} based on the copied
@@ -69,11 +70,14 @@ class Request(pb.RemoteCopy, server.Request):
         self.setETag          = self.remote.remoteMethod('setETag')
         self.setResponseCode  = self.remote.remoteMethod('setResponseCode')
         self.setLastModified  = self.remote.remoteMethod('setLastModified')
+        self.loseConnection   = self.remote.remoteMethod('loseConnection')
+        self.setDefaultContentType = self.remote.remoteMethod(
+            'setDefaultContentType')
+
 
         # To avoid failing if a resource tries to write a very long string
         # all at once, this one will be handled slightly differently.
         self._write = self.remote.remoteMethod('write')
-
 
     def write(self, bytes):
         """

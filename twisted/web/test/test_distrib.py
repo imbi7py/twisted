@@ -452,4 +452,3 @@ class UserDirectoryTests(unittest.TestCase):
         self.assertIdentical(directory._pwd, pwd)
     if pwd is None:
         test_passwordDatabase.skip = "pwd module required"
-
