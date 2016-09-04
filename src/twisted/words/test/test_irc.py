@@ -19,18 +19,233 @@ from twisted.python.filepath import FilePath
 
 
 
+class OctTests(unittest.TestCase):
+    """
+    Tests for L{twisted.words.protocols.irc._oct}
+    """
+
+    def test_octalLiteral(self):
+        """
+        An octal literal is parsed into an integer.
+        """
+        self.assertEqual(irc._oct("0o10"), 8)
+        self.assertEqual(irc._oct("10"), 8)
+
+
+
+class BChrTests(unittest.TestCase):
+    """
+    Tests for L{twisted.words.protocols.irc._bchr}
+    """
+
+    def test_integerToByte(self):
+        """
+        An integer is converted to a byte string of length one.
+        """
+        self.assertEqual(irc._bchr(0), b'\x00')
+
+
+
+class ParsemsgTests(unittest.TestCase):
+    """
+    Tests for L{twisted.words.protocols.irc.parsemsg}
+    """
+
+    def test_parsemsgEmptyMessage(self):
+        """
+        An empty line results in an L{irc.IRCBadMessage} exception.
+        """
+        exc = self.assertRaises(irc.IRCBadMessage, irc.parsemsg, b"")
+        self.assertEqual(str(exc), "Empty line.")
+
+
+    def test_parsemsgWithoutPrefix(self):
+        """
+        A message without a source has an empty prefix.
+        """
+        prefix, _, _ = irc.parsemsg(b"DIE")
+        self.assertEqual(prefix, b"")
+
+
+    def test_parsemsgWithPrefix(self):
+        """
+        A message with a source has its source parsed as its prefix.
+        """
+        prefix, _, _ = irc.parsemsg(b":WiZ AWAY")
+        self.assertEqual(prefix, b"WiZ")
+
+
+    def test_parsemsgCommandWithoutPrefix(self):
+        """
+        A command message outwith a source has an empty prefix and its
+        command parsed.
+        """
+
+        prefix, command, _ = irc.parsemsg(b"AWAY")
+        self.assertEqual(prefix, b"")
+        self.assertEqual(command, b"AWAY")
+
+
+    def test_parsemsgCommandWithPrefix(self):
+        """
+        A command message with a source has its source parsed as its
+        prefix and its command parsed.
+        """
+
+        prefix, command, _ = irc.parsemsg(b":WiZ AWAY")
+        self.assertEqual(prefix, b"WiZ")
+        self.assertEqual(command, b"AWAY")
+
+
+    def test_parsemsgCommandWithArgsWithoutPrefix(self):
+        """
+        A command without a prefix and with arguments has an empty
+        prefix, its command parsed and its arguments parsed into a
+        list.
+        """
+        prefix, command, args = irc.parsemsg(b"INVITE WiZ #Dust")
+        self.assertEqual(prefix, b"")
+        self.assertEqual(command, b"INVITE")
+        self.assertEqual(args, [b"WiZ", b"#Dust"])
+
+
+    def test_parsemsgCommandWithArgsWithoutPrefix(self):
+        """
+        A command without a prefix and with arguments has an empty
+        prefix, its command parsed and its arguments parsed into a
+        list.
+        """
+        prefix, command, args = irc.parsemsg(b":Angel INVITE WiZ #Dust")
+        self.assertEqual(prefix, b"Angel")
+        self.assertEqual(command, b"INVITE")
+        self.assertEqual(args, [b"WiZ", b"#Dust"])
+
+
+
+class SplitTests(unittest.TestCase):
+    """
+    Tests for L{twisted.words.protocols.irc.split}
+    """
+
+    def test_shortByteStringNotSplit(self):
+        """
+        A byte string shorter than the requested length is not split.
+        """
+        self.assertEqual(irc.split(b"short string", length=100),
+                         [b"short string"])
+
+
+    def test_longByteStringSplit(self):
+        """
+        A byte string that is longer than the requested length is
+        split into multiple "lines", each of which is no longer than
+        the request length.  Whitespace and hyphens are not considered
+        when splitting.
+        """
+        line1 = b"a\nb"
+        line2 = b"-c\n"
+        line3 = b"d"
+
+        self.assertEqual(irc.split(line1 + line2 + line3, length=3),
+                         [line1, line2, line3])
+
+
+
+class CommandDispatcherMixinTests(unittest.TestCase):
+    """
+    Tests for L{twisted.words.protocol.irc._CommandDispatcherMixin}
+    """
+
+    def setUp(self):
+        self.somethingReturnValue = somethingReturnValue = "something"
+        self.unknownReturnValue = unknownReturnValue = "unknown"
+
+        class Dispatch(irc._CommandDispatcherMixin):
+            """
+            A subclass of L{irc._CommandDispatcherMixin} that helps
+            test its API.
+            """
+            prefix = "cmd"
+
+            def cmd_SOMETHING(self, *args):
+                return (somethingReturnValue, args)
+
+        self.dispatch = Dispatch()
+
+        class DispatchHandlesUnknown(irc._CommandDispatcherMixin):
+            """
+            A subclass of L{irc._CommandDispatcherMixin} that helps
+            test its API, including its fallback "unknown" handler.
+            """
+            prefix = "cmd"
+
+            def cmd_SOMETHING(self, *args):
+                return (somethingReturnValue, args)
+
+            def cmd_unknown(self, *args):
+                return (unknownReturnValue, args)
+
+        self.dispatchHandlesUnknown = DispatchHandlesUnknown()
+
+
+    def test_dispatchImplementedCommand(self):
+        """
+        Dispatching to a command that is implemented calls the
+        implemented command.
+        """
+        returnValue, args = self.dispatch.dispatch(b"SOMETHING", b"arg")
+        self.assertIs(returnValue, self.somethingReturnValue)
+        self.assertEqual(args, (b"arg",))
+
+
+    def test_dispatchUnimplementedCommandRaisesUnhandledCommand(self):
+        """
+        Dispatching to a command that is not implemented raises
+        L{irc.UnhandledCommand}
+        """
+        exc = self.assertRaises(irc.UnhandledCommand,
+                                self.dispatch.dispatch, b"FOO", b"arg")
+        self.assertIn("cmd_FOO", str(exc))
+
+
+    def test_dispatchImplementedCommandUnknownHandler(self):
+        """
+        Dispatching to a command that is implemented, but on a class
+        that implements an unknown command handler, calls the
+        implemented command.
+        """
+        returnValue, args = self.dispatchHandlesUnknown.dispatch(
+            b"SOMETHING", b"arg")
+        self.assertIs(returnValue, self.somethingReturnValue)
+        self.assertEqual(args, (b"arg",))
+
+
+    def test_dispatchUnimplementedCommandCallsUnknownHandler(self):
+        """
+        Dispatching to a command that is implemented, but on a class
+        that implements an unknown command handler, calls the
+        implemented command.
+        """
+        returnValue, args = self.dispatchHandlesUnknown.dispatch(
+            b"FOO", b"arg")
+        self.assertIs(returnValue, self.unknownReturnValue)
+        self.assertEqual(args, (b"FOO", b"arg",))
+
+
+
+
 class ModeParsingTests(unittest.TestCase):
     """
     Tests for L{twisted.words.protocols.irc.parseModes}.
     """
-    paramModes = ('klb', 'b')
+    paramModes = (b'klb', b'b')
 
 
     def test_emptyModes(self):
         """
         Parsing an empty mode string raises L{irc.IRCBadModes}.
         """
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'', [])
 
 
     def test_emptyModeSequence(self):
@@ -39,10 +254,10 @@ class ModeParsingTests(unittest.TestCase):
         C{-} followed directly by another C{+} or C{-}, or not followed by
         anything at all) raises L{irc.IRCBadModes}.
         """
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '++k', [])
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '-+k', [])
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '+', [])
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '-', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'++k', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'-+k', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'+', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'-', [])
 
 
     def test_malformedModes(self):
@@ -50,8 +265,8 @@ class ModeParsingTests(unittest.TestCase):
         Parsing a mode string that does not start with C{+} or C{-} raises
         L{irc.IRCBadModes}.
         """
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, 'foo', [])
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '%', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'foo', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'%', [])
 
 
     def test_nullModes(self):
@@ -59,8 +274,8 @@ class ModeParsingTests(unittest.TestCase):
         Parsing a mode string that contains no mode characters raises
         L{irc.IRCBadModes}.
         """
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '+', [])
-        self.assertRaises(irc.IRCBadModes, irc.parseModes, '-', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'+', [])
+        self.assertRaises(irc.IRCBadModes, irc.parseModes, b'-', [])
 
 
     def test_singleMode(self):
@@ -69,13 +284,13 @@ class ModeParsingTests(unittest.TestCase):
         with no parameters, in the "added" direction and no modes in the
         "removed" direction.
         """
-        added, removed = irc.parseModes('+s', [])
-        self.assertEqual(added, [('s', None)])
+        added, removed = irc.parseModes(b'+s', [])
+        self.assertEqual(added, [(b's', None)])
         self.assertEqual(removed, [])
 
-        added, removed = irc.parseModes('-s', [])
+        added, removed = irc.parseModes(b'-s', [])
         self.assertEqual(added, [])
-        self.assertEqual(removed, [('s', None)])
+        self.assertEqual(removed, [(b's', None)])
 
 
     def test_singleDirection(self):
@@ -83,27 +298,27 @@ class ModeParsingTests(unittest.TestCase):
         Parsing a single-direction mode setting with multiple modes and no
         parameters, results in all modes falling into the same direction group.
         """
-        added, removed = irc.parseModes('+stn', [])
-        self.assertEqual(added, [('s', None),
-                                  ('t', None),
-                                  ('n', None)])
+        added, removed = irc.parseModes(b'+stn', [])
+        self.assertEqual(added, [(b's', None),
+                                 (b't', None),
+                                 (b'n', None)])
         self.assertEqual(removed, [])
 
-        added, removed = irc.parseModes('-nt', [])
+        added, removed = irc.parseModes(b'-nt', [])
         self.assertEqual(added, [])
-        self.assertEqual(removed, [('n', None),
-                                    ('t', None)])
+        self.assertEqual(removed, [(b'n', None),
+                                   (b't', None)])
 
 
     def test_multiDirection(self):
         """
         Parsing a multi-direction mode setting with no parameters.
         """
-        added, removed = irc.parseModes('+s-n+ti', [])
-        self.assertEqual(added, [('s', None),
-                                  ('t', None),
-                                  ('i', None)])
-        self.assertEqual(removed, [('n', None)])
+        added, removed = irc.parseModes(b'+s-n+ti', [])
+        self.assertEqual(added, [(b's', None),
+                                 (b't', None),
+                                 (b'i', None)])
+        self.assertEqual(removed, [(b'n', None)])
 
 
     def test_consecutiveDirection(self):
@@ -112,11 +327,11 @@ class ModeParsingTests(unittest.TestCase):
         sequences with the same direction results in the same result as if
         there were only one mode sequence in the same direction.
         """
-        added, removed = irc.parseModes('+sn+ti', [])
-        self.assertEqual(added, [('s', None),
-                                  ('n', None),
-                                  ('t', None),
-                                  ('i', None)])
+        added, removed = irc.parseModes(b'+sn+ti', [])
+        self.assertEqual(added, [(b's', None),
+                                 (b'n', None),
+                                 (b't', None),
+                                 (b'i', None)])
         self.assertEqual(removed, [])
 
 
@@ -127,11 +342,11 @@ class ModeParsingTests(unittest.TestCase):
         """
         self.assertRaises(irc.IRCBadModes,
                           irc.parseModes,
-                          '+k', [],
+                          b'+k', [],
                           self.paramModes)
         self.assertRaises(irc.IRCBadModes,
                           irc.parseModes,
-                          '+kl', ['foo', '10', 'lulz_extra_param'],
+                          b'+kl', [b'foo', b'10', b'lulz_extra_param'],
                           self.paramModes)
 
 
@@ -142,34 +357,34 @@ class ModeParsingTests(unittest.TestCase):
         the parameters.
         """
         added, removed = irc.parseModes(
-            '+klbb',
-            ['somekey', '42', 'nick!user@host', 'other!*@*'],
+            b'+klbb',
+            [b'somekey', b'42', b'nick!user@host', b'other!*@*'],
             self.paramModes)
-        self.assertEqual(added, [('k', 'somekey'),
-                                  ('l', '42'),
-                                  ('b', 'nick!user@host'),
-                                  ('b', 'other!*@*')])
+        self.assertEqual(added, [(b'k', b'somekey'),
+                                 (b'l', b'42'),
+                                 (b'b', b'nick!user@host'),
+                                 (b'b', b'other!*@*')])
         self.assertEqual(removed, [])
 
         added, removed = irc.parseModes(
-            '-klbb',
-            ['nick!user@host', 'other!*@*'],
+            b'-klbb',
+            [b'nick!user@host', b'other!*@*'],
             self.paramModes)
         self.assertEqual(added, [])
-        self.assertEqual(removed, [('k', None),
-                                    ('l', None),
-                                    ('b', 'nick!user@host'),
-                                    ('b', 'other!*@*')])
+        self.assertEqual(removed, [(b'k', None),
+                                   (b'l', None),
+                                   (b'b', b'nick!user@host'),
+                                   (b'b', b'other!*@*')])
 
         # Mix a no-argument mode in with argument modes.
         added, removed = irc.parseModes(
-            '+knbb',
-            ['somekey', 'nick!user@host', 'other!*@*'],
+            b'+knbb',
+            [b'somekey', b'nick!user@host', b'other!*@*'],
             self.paramModes)
-        self.assertEqual(added, [('k', 'somekey'),
-                                  ('n', None),
-                                  ('b', 'nick!user@host'),
-                                  ('b', 'other!*@*')])
+        self.assertEqual(added, [(b'k', b'somekey'),
+                                 (b'n', None),
+                                 (b'b', b'nick!user@host'),
+                                 (b'b', b'other!*@*')])
         self.assertEqual(removed, [])
 
 
@@ -305,7 +520,7 @@ class FormattedTextTests(unittest.TestCase):
         self.assertEqual(
             irc.assembleFormattedText(
                 A.fg.blue['hello']),
-            '\x0f\x0302hello')
+            b'\x0f\x0302hello')
 
 
     def test_assembleBackgroundColor(self):
@@ -317,8 +532,8 @@ class FormattedTextTests(unittest.TestCase):
         """
         self.assertEqual(
             irc.assembleFormattedText(
-                A.bg.blue['hello']),
-            '\x0f\x03,02hello')
+                A.bg.blue[b'hello']),
+            b'\x0f\x03,02hello')
 
 
     def test_assembleColor(self):

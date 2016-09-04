@@ -45,18 +45,51 @@ from twisted.internet import reactor, protocol, task
 from twisted.persisted import styles
 from twisted.protocols import basic
 from twisted.python import log, reflect, _textattributes
-from twisted.python.compat import xrange
+from twisted.python.compat import (iterbytes, nativeString,
+                                   networkString, reduce, xrange)
 
-NUL = chr(0)
-CR = chr(0o15)
-NL = chr(0o12)
+
+def _oct(literal):
+    """
+    Transform the octal C{literal} in to an integer on Python 2 and 3.
+
+    @param literal: A number written in base 8.
+    @type literal: L{str}
+
+    @return: an integer
+    @rtype: L{int}
+    """
+    return int(literal, 8)
+
+
+
+def _bchr(integer):
+    """
+    Convert integer to a byte string of length one, e.g. ``0`` becomes
+    ``b'\x00'``.  This is different from
+    L{twisted.python.compat.intToBytes}, which converts an integer to
+    its ASCII representation.
+
+    @param integer: the integer to convert to a byte.
+    @type integer: L{int}
+
+    @return: the integer as a byte.
+    @rtype: L{bytes}
+    """
+    return bytes(bytearray([integer]))
+
+
+
+NUL = _bchr(_oct("0o0"))
+CR = _bchr(_oct("0o15"))
+NL = _bchr(_oct("0o12"))
 LF = NL
-SPC = chr(0o40)
+SPC = _bchr(_oct("0o40"))
 
 # This includes the CRLF terminator characters.
 MAX_COMMAND_LENGTH = 512
 
-CHANNEL_PREFIXES = '&#!+'
+CHANNEL_PREFIXES = b'&#!+'
 
 class IRCBadMessage(Exception):
     pass
@@ -84,14 +117,14 @@ def parsemsg(s):
     @return: A tuple of (prefix, command, args).
     @rtype: L{tuple}
     """
-    prefix = ''
+    prefix = b''
     trailing = []
     if not s:
         raise IRCBadMessage("Empty line.")
-    if s[0] == ':':
-        prefix, s = s[1:].split(' ', 1)
-    if s.find(' :') != -1:
-        s, trailing = s.split(' :', 1)
+    if s[:1] == b':':
+        prefix, s = s[1:].split(b' ', 1)
+    if b' :' in s:
+        s, trailing = s.split(b' :', 1)
         args = s.split()
         args.append(trailing)
     else:
@@ -101,34 +134,32 @@ def parsemsg(s):
 
 
 
-def split(str, length=80):
+def split(byteString, length=80):
     """
-    Split a string into multiple lines.
+    Split a byte string into multiple "lines".  The byte string is
+    treated as opaque data, so no attempt is made to split at
+    whitespace or hyphens.
 
-    Whitespace near C{str[length]} will be preferred as a breaking point.
-    C{"\\n"} will also be used as a breaking point.
+    @param byteString: The string to split.
+    @type byteString: L{bytes}
 
-    @param str: The string to split.
-    @type str: C{str}
+    @param length: The maximum length which will be allowed for any
+        string in the result.
+    @type length: L{int}
 
-    @param length: The maximum length which will be allowed for any string in
-        the result.
-    @type length: C{int}
-
-    @return: C{list} of C{str}
+    @return: L{list} of L{bytes}
     """
-    return [chunk
-            for line in str.split('\n')
-            for chunk in textwrap.wrap(line, length)]
+    return [byteString[i:i + length]
+            for i in xrange(0, len(byteString), length)]
 
 
 def _intOrDefault(value, default=None):
     """
     Convert a value to an integer if possible.
 
-    @rtype: C{int} or type of L{default}
-    @return: An integer when C{value} can be converted to an integer,
-        otherwise return C{default}
+    @rtype: L{int} or type of L{default}
+    @return: An integer when L{value} can be converted to an integer,
+        otherwise return L{default}
     """
     if value:
         try:
@@ -167,7 +198,7 @@ class _CommandDispatcherMixin(object):
         Perform actual command dispatch.
         """
         def _getMethodName(command):
-            return '%s_%s' % (self.prefix, command)
+            return '%s_%s' % (self.prefix, nativeString(command))
 
         def _getMethod(name):
             return getattr(self, _getMethodName(name), None)
@@ -185,7 +216,7 @@ class _CommandDispatcherMixin(object):
 
 
 
-def parseModes(modes, params, paramModes=('', '')):
+def parseModes(modes, params, paramModes=(b'', b'')):
     """
     Parse an IRC mode string.
 
@@ -194,13 +225,13 @@ def parseModes(modes, params, paramModes=('', '')):
     is the mode character, and param is the parameter passed for that mode, or
     L{None} if no parameter is required.
 
-    @type modes: C{str}
+    @type modes: L{bytes}
     @param modes: Modes string to parse.
 
-    @type params: C{list}
+    @type params: L{list}
     @param params: Parameters specified along with L{modes}.
 
-    @type paramModes: C{(str, str)}
+    @type paramModes: C{(bytes, bytes)}
     @param paramModes: A pair of strings (C{(add, remove)}) that indicate which modes take
         parameters when added or removed.
 
@@ -211,18 +242,18 @@ def parseModes(modes, params, paramModes=('', '')):
     if len(modes) == 0:
         raise IRCBadModes('Empty mode string')
 
-    if modes[0] not in '+-':
+    if modes[:1] not in b'+-':
         raise IRCBadModes('Malformed modes string: %r' % (modes,))
 
     changes = ([], [])
 
     direction = None
     count = -1
-    for ch in modes:
-        if ch in '+-':
+    for ch in iterbytes(modes):
+        if ch in b'+-':
             if count == 0:
                 raise IRCBadModes('Empty mode sequence: %r' % (modes,))
-            direction = '+-'.index(ch)
+            direction = b'+-'.index(ch)
             count = 0
         else:
             param = None
@@ -3193,11 +3224,11 @@ class DccFileReceive(DccFileReceiveBasic):
 
 
 
-_OFF = '\x0f'
-_BOLD = '\x02'
-_COLOR = '\x03'
-_REVERSE_VIDEO = '\x16'
-_UNDERLINE = '\x1f'
+_OFF = b'\x0f'
+_BOLD = b'\x02'
+_COLOR = b'\x03'
+_REVERSE_VIDEO = b'\x16'
+_UNDERLINE = b'\x1f'
 
 # Mapping of IRC color names to their color values.
 _IRC_COLORS = dict(
@@ -3323,13 +3354,13 @@ class _FormattingState(_textattributes._FormattingStateMixin):
         if self.reverseVideo:
             attrs.append(_REVERSE_VIDEO)
         if self.foreground is not None or self.background is not None:
-            c = ''
+            c = b''
             if self.foreground is not None:
-                c += '%02d' % (self.foreground,)
+                c += networkString('%02d' % (self.foreground,))
             if self.background is not None:
-                c += ',%02d' % (self.background,)
+                c += networkString(',%02d' % (self.background,))
             attrs.append(_COLOR + c)
-        return _OFF + ''.join(map(str, attrs))
+        return _OFF + b''.join(attrs)
 
 
 
@@ -3409,7 +3440,7 @@ class _FormattingParser(_CommandDispatcherMixin):
         """
         Handle input.
 
-        @type ch: C{str}
+        @type ch: C{bytes}
         @param ch: A single character of input to process
         """
         self.dispatch(self.state, ch)
@@ -3536,21 +3567,21 @@ class _FormattingParser(_CommandDispatcherMixin):
 
 
 
-def parseFormattedText(text):
+def parseFormattedText(byteString):
     """
-    Parse text containing IRC formatting codes into structured information.
+    Parse bytes containing IRC formatting codes into structured information.
 
     Color codes are mapped from 0 to 15 and wrap around if greater than 15.
 
-    @type text: C{str}
-    @param text: Formatted text to parse.
+    @type byteString: C{bytes}
+    @param byteString: Formatted bytes to parse.
 
     @return: Structured text and attributes.
 
     @since: 13.1
     """
     state = _FormattingParser()
-    for ch in text:
+    for ch in iterbytes(byteString):
         state.process(ch)
     return state.complete()
 
@@ -3602,7 +3633,7 @@ def assembleFormattedText(formatted):
 
     @param formatted: Structured text and attributes.
 
-    @rtype: C{str}
+    @rtype: C{bytes}
     @return: String containing mIRC control sequences that mimic those
         specified by I{formatted}.
 
