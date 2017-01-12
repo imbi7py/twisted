@@ -3741,6 +3741,7 @@ class WrapClientTLSTests(unittest.TestCase):
 
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, rule, run_state_machine_as_test, precondition
+from hypothesis import settings
 
 def makeConnection(tcpClient, transport=object()):
     (host, port, factory, timeout, bindAddress) = tcpClient
@@ -3799,11 +3800,26 @@ class HostnameEndpointRuleMachine(RuleBasedStateMachine):
         self.connectDeferred = self.endpoint.connect(
             protocol.Factory.forProtocol(protocol.Protocol)
         )
-        self.connectDeferred.addErrback(lambda _: None)
+
+        self.failures = []
+
+        def ignoreDNSLookupError(failure):
+            if failure.trap(error.DNSLookupError,
+                            error.ConnectingCancelledError,
+                            error.ConnectError,
+                            Exception) == Exception:
+                self.failures.append(failure)
+
+        self.connectDeferred.addErrback(ignoreDNSLookupError)
+
+    def checkAndRaise(self):
+        if self.failures:
+            self.failures[-1].raiseException()
 
     @rule()
     def timeout(self):
-        self.reactor.advance(endpoints.HostnameEndpoint._DEFAULT_ATTEMPT_DELAY / 2)
+        self.checkAndRaise()
+        self.reactor.advance(endpoints.HostnameEndpoint._DEFAULT_ATTEMPT_DELAY * 2)
 
     # From IResolutionReceiver
     # - triggered via deterministicResolvingReactor
@@ -3815,11 +3831,13 @@ class HostnameEndpointRuleMachine(RuleBasedStateMachine):
         IPv4Address("TCP", "127.0.0.1", 0),
     ]))
     def endpointResolved(self, address):
+        self.checkAndRaise()
         self.resolverController.resolveAddress(address)
 
     @precondition(lambda self: self.resolverController._receiver)
     @rule()
     def resolutionComplete(self):
+        self.checkAndRaise()
         self.resolverController.finishResolving()
 
     @precondition(lambda self: self.reactor.tcpClients)
@@ -3828,6 +3846,7 @@ class HostnameEndpointRuleMachine(RuleBasedStateMachine):
         """
         A connection has been established.
         """
+        self.checkAndRaise()
         tcpClient = choice(self.reactor.tcpClients)
         self.reactor.tcpClients.remove(tcpClient)
         makeConnection(tcpClient)
@@ -3839,6 +3858,7 @@ class HostnameEndpointRuleMachine(RuleBasedStateMachine):
         """
         A connection cannot be established
         """
+        self.checkAndRaise()
         tcpClient = choice(self.reactor.tcpClients)
         self.reactor.tcpClients.remove(tcpClient)
         failConnection(tcpClient)
@@ -3848,6 +3868,7 @@ class HostnameEndpointRuleMachine(RuleBasedStateMachine):
         """
         A user cancelled the outermost deferred.
         """
+        self.checkAndRaise()
         self.connectDeferred.cancel()
 
 
@@ -3855,4 +3876,5 @@ class HostnameEndpointRuleMachine(RuleBasedStateMachine):
 
 class HostnameEndpointMachineTests(unittest.SynchronousTestCase):
     def test_stuff(self):
-        run_state_machine_as_test(lambda: HostnameEndpointRuleMachine(self))
+        run_state_machine_as_test(lambda: HostnameEndpointRuleMachine(self),
+                settings=settings(max_examples=65535))

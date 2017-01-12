@@ -864,7 +864,8 @@ class HostnameEndpoint(object):
                     checkDone()
 
             iterateEndpoint.clock = self._reactor
-            iterateEndpoint.start(self._attemptDelay)
+            iterateEndpoint.start(self._attemptDelay).addErrback(
+                winner.errback)
 
             @winner.addBoth
             def cancelRemainingPending(result):
