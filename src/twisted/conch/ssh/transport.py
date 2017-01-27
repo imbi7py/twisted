@@ -22,7 +22,7 @@ from hashlib import md5, sha1, sha256, sha384, sha512
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import algorithms, modes, Cipher
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import dh, ec
 
 from twisted.internet import protocol, defer
 from twisted.python import log, randbytes
@@ -33,9 +33,8 @@ from twisted.python.compat import networkString, iterbytes, _bytesChr as chr
 
 from twisted.conch.ssh import address, keys, _kex
 from twisted.conch.ssh.common import (
-    NS, getNS, MP, getMP, _MPpow, ffs, int_from_bytes
+    NS, getNS, MP, getMP, _MPpow, ffs, int_from_bytes, _bytesToMP,
 )
-
 
 
 def _getRandomNumber(random, bits):
@@ -1338,11 +1337,27 @@ class SSHServerTransport(SSHTransportBase):
         @type packet: L{bytes}
         @param packet: The message data.
         """
-        clientDHpublicKey, foo = getMP(packet)
-        y = _getRandomNumber(randbytes.secureRandom, 512)
+        clientDHpublicKey, _ = getMP(packet)
+
         self.g, self.p = _kex.getDHGeneratorAndPrime(self.kexAlg)
-        serverDHpublicKey = _MPpow(self.g, y, self.p)
-        sharedSecret = _MPpow(clientDHpublicKey, y, self.p)
+
+        dhNumbers = dh.DHParameterNumbers(self.p, self.g)
+        dhParameters = dhNumbers.parameters(default_backend())
+
+        ephemeralServerDHprivateKey = dhParameters.generate_private_key()
+        serverDHpublicKey = ephemeralServerDHprivateKey.public_key()
+
+        clientDHpublicNumbers = dh.DHPublicNumbers(clientDHpublicKey,
+                                                   dhNumbers)
+        ephemeralClientDHpublicKey = clientDHpublicNumbers.public_key(
+            default_backend())
+
+        sharedSecret = ephemeralServerDHprivateKey.exchange(
+            ephemeralClientDHpublicKey)
+
+        serializedSharedSecret = _bytesToMP(sharedSecret)
+        serializedServerDHpublicKey = MP(serverDHpublicKey.public_numbers().y)
+
         h = sha1()
         h.update(NS(self.otherVersionString))
         h.update(NS(self.ourVersionString))
@@ -1350,15 +1365,16 @@ class SSHServerTransport(SSHTransportBase):
         h.update(NS(self.ourKexInitPayload))
         h.update(NS(self.factory.publicKeys[self.keyAlg].blob()))
         h.update(MP(clientDHpublicKey))
-        h.update(serverDHpublicKey)
-        h.update(sharedSecret)
+        h.update(serializedServerDHpublicKey)
+        h.update(serializedSharedSecret)
         exchangeHash = h.digest()
+
         self.sendPacket(
             MSG_KEXDH_REPLY,
             NS(self.factory.publicKeys[self.keyAlg].blob()) +
-            serverDHpublicKey +
+            serializedServerDHpublicKey +
             NS(self.factory.privateKeys[self.keyAlg].sign(exchangeHash)))
-        self._keySetup(sharedSecret, exchangeHash)
+        self._keySetup(serializedSharedSecret, exchangeHash)
 
 
     def ssh_KEX_DH_GEX_REQUEST_OLD(self, packet):

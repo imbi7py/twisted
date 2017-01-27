@@ -905,6 +905,38 @@ class SSHFactoryTests(unittest.TestCase):
 
 
 
+class BytesToMPTest(unittest.SynchronousTestCase):
+    """
+    Tests for L{common._bytesToMP}.  See RFC 4251, section 5's
+    description of C{mpint}.
+    """
+
+    if not cryptography:
+        skip = "can't run without cryptography"
+
+
+    def test_positiveAndMostSignificantBitSet(self):
+        """
+        Postive numbers whose most significant bit is one have a
+        leading zero prepended.
+        """
+        asBytes = common._bytesToMP(b'\xff\x00')
+        expectedLength = b'\x00\x00\x00\x03'
+        withZero = b'\x00\xff\x00'
+        self.assertEqual(asBytes, expectedLength + withZero)
+
+
+    def test_lengthPrepended(self):
+        """
+        The number is preceded by its length as a
+        """
+        asBytes = common._bytesToMP(b'\x01\x02\x03\x04')
+        expectedLength = b'\x00\x00\x00\x04'
+        withZero = b'\x01\x02\x03\x04'
+        self.assertEqual(asBytes, expectedLength + withZero)
+
+
+
 class MPTests(unittest.TestCase):
     """
     Tests for L{common.getMP}.

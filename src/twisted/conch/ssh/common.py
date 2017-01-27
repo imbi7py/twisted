@@ -47,14 +47,31 @@ def getNS(s, count=1):
 
 
 
+def _bytesToMP(bn):
+    """
+    Convert a byte string representing a serialized integer into a
+    serialized multi-precision integer.  Intended for converting
+    shared secrets returned by L{cryptography} primitives into the SSH
+    wire format.
+
+    @param bn: The serialized integer to convert.
+    @type bn: L{bytes}
+
+    @return: A serialized multi-precision integer.
+    @rtype: L{bytes}
+    """
+    if ord(bn[0:1]) & 128:
+        bn = b'\000' + bn
+    return struct.pack('>L', len(bn)) + bn
+
+
+
 def MP(number):
     if number == 0:
         return b'\000' * 4
     assert number > 0
     bn = int_to_bytes(number)
-    if ord(bn[0:1]) & 128:
-        bn = b'\000' + bn
-    return struct.pack('>L', len(bn)) + bn
+    return _bytesToMP(bn)
 
 
 
