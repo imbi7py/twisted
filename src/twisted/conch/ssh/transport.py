@@ -1224,6 +1224,18 @@ class SSHServerTransport(SSHTransportBase):
     ignoreNextPacket = 0
 
 
+    def _generateEphemeralDHPrivateKey(self, numbers):
+        """
+        Generate an ephemeral Diffie-Hellman private key from the
+        provided numbers.  This is shim can be monkey patched in
+        tests to produce predictable private keys.
+
+        @param parameters: The Diffie-Hellman
+        """
+        parameters = numbers.parameters(default_backend())
+        return parameters.generate_private_key()
+
+
     def ssh_KEXINIT(self, packet):
         """
         Called when we receive a MSG_KEXINIT message.  For a description
@@ -1342,9 +1354,10 @@ class SSHServerTransport(SSHTransportBase):
         self.g, self.p = _kex.getDHGeneratorAndPrime(self.kexAlg)
 
         dhNumbers = dh.DHParameterNumbers(self.p, self.g)
-        dhParameters = dhNumbers.parameters(default_backend())
 
-        ephemeralServerDHprivateKey = dhParameters.generate_private_key()
+        ephemeralServerDHprivateKey = self._generateEphemeralDHPrivateKey(
+            dhNumbers)
+
         serverDHpublicKey = ephemeralServerDHprivateKey.public_key()
 
         clientDHpublicNumbers = dh.DHPublicNumbers(clientDHpublicKey,

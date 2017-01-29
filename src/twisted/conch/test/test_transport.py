@@ -25,7 +25,7 @@ if pyasn1 is not None and cryptography is not None:
     from twisted.conch.ssh import transport, keys, factory
     from twisted.conch.test import keydata
     from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric import dh, ec
     from cryptography.exceptions import UnsupportedAlgorithm
 else:
     if pyasn1 is None:
@@ -1409,20 +1409,42 @@ class ServerSSHTransportTests(ServerSSHTransportBaseCase, TransportTestCase):
         self.proto.dataReceived(self.transport.value())
 
         g, p = _kex.getDHGeneratorAndPrime(kexAlgorithm)
-        e = pow(g, 5000, p)
 
-        self.proto.ssh_KEX_DH_GEX_REQUEST_OLD(common.MP(e))
-        y = common.getMP(b'\x00\x00\x00\x40' + b'\x99' * 64)[0]
-        f = common._MPpow(self.proto.g, y, self.proto.p)
-        sharedSecret = common._MPpow(e, y, self.proto.p)
+        serverPrivateValue = 42
+        clientPrivateValue = 7
+        serverPublicValue = pow(g, serverPrivateValue, p)
+        clientPublicValue = pow(g, clientPrivateValue, p)
+
+        dhNumbers = dh.DHParameterNumbers(p, g)
+        clientDHprivateKey = dh.DHPrivateNumbers(
+            clientPrivateValue,
+            dh.DHPublicNumbers(clientPublicValue, dhNumbers),
+        ).private_key(default_backend())
+
+        def predictableDHPrivateKey(numbers):
+            return dh.DHPrivateNumbers(
+                serverPrivateValue,
+                dh.DHPublicNumbers(serverPublicValue, numbers),
+            ).private_key(default_backend())
+
+        # ensure we get the same key every time
+        self.proto._generateEphemeralDHPrivateKey = predictableDHPrivateKey
+
+        # send the kex request
+        self.proto.ssh_KEX_DH_GEX_REQUEST_OLD(common.MP(clientPublicValue))
+
+        f = common.MP(serverPublicValue)
+        sharedSecret = clientDHprivateKey.exchange(
+            predictableDHPrivateKey(dhNumbers).public_key())
+        serializedSharedSecret = common._bytesToMP(sharedSecret)
 
         h = sha1()
         h.update(common.NS(self.proto.ourVersionString) * 2)
         h.update(common.NS(self.proto.ourKexInitPayload) * 2)
         h.update(common.NS(self.proto.factory.publicKeys[b'ssh-rsa'].blob()))
-        h.update(common.MP(e))
+        h.update(common.MP(clientPublicValue))
         h.update(f)
-        h.update(sharedSecret)
+        h.update(serializedSharedSecret)
         exchangeHash = h.digest()
 
         signature = self.proto.factory.privateKeys[b'ssh-rsa'].sign(
