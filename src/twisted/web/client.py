@@ -47,6 +47,8 @@ from twisted.web.iweb import UNKNOWN_LENGTH, IAgent, IBodyProducer, IResponse
 from twisted.web.http_headers import Headers
 from twisted.logger import Logger
 
+from twisted.web._newclient import _ensureValidURI, _ensureValidMethod
+
 
 class PartialDownloadError(error.Error):
     """
@@ -81,8 +83,8 @@ class HTTPPageGetter(http.HTTPClient):
     _specialHeaders = set((b'host', b'user-agent', b'cookie', b'content-length'))
 
     def connectionMade(self):
-        method = getattr(self.factory, 'method', b'GET')
-        self.sendCommand(method, self.factory.path)
+        method = _ensureValidMethod(getattr(self.factory, 'method', b'GET'))
+        self.sendCommand(method, _ensureValidURI(self.factory.path))
         if self.factory.scheme == b'http' and self.factory.port != 80:
             host = self.factory.host + b':' + intToBytes(self.factory.port)
         elif self.factory.scheme == b'https' and self.factory.port != 443:
@@ -362,7 +364,7 @@ class HTTPClientFactory(protocol.ClientFactory):
             # just in case a broken http/1.1 decides to keep connection alive
             self.headers.setdefault(b"connection", b"close")
         self.postdata = postdata
-        self.method = method
+        self.method = _ensureValidMethod(method)
 
         self.setURL(url)
 
@@ -389,6 +391,7 @@ class HTTPClientFactory(protocol.ClientFactory):
         return "<%s: %s>" % (self.__class__.__name__, self.url)
 
     def setURL(self, url):
+        _ensureValidURI(url.strip())
         self.url = url
         uri = URI.fromBytes(url)
         if uri.scheme and uri.host:
@@ -733,7 +736,7 @@ def _makeGetterFactory(url, factoryFactory, contextFactory=None,
 
     @return: The factory created by C{factoryFactory}
     """
-    uri = URI.fromBytes(url)
+    uri = URI.fromBytes(_ensureValidURI(url.strip()))
     factory = factoryFactory(url, *args, **kwargs)
     if uri.scheme == b'https':
         from twisted.internet import ssl
@@ -1490,6 +1493,8 @@ class _AgentBase(object):
         Issue a new request, given the endpoint and the path sent as part of
         the request.
         """
+        method = _ensureValidMethod(method)
+
         # Create minimal headers, if necessary:
         if headers is None:
             headers = Headers()
@@ -1714,6 +1719,7 @@ class Agent(_AgentBase):
 
         @see: L{twisted.web.iweb.IAgent.request}
         """
+        uri = _ensureValidURI(uri.strip())
         parsedURI = URI.fromBytes(uri)
         try:
             endpoint = self._getEndpoint(parsedURI)
@@ -1747,6 +1753,8 @@ class ProxyAgent(_AgentBase):
         """
         Issue a new request via the configured proxy.
         """
+        uri = _ensureValidURI(uri.strip())
+
         # Cache *all* connections under the same key, since we are only
         # connecting to a single destination, the proxy:
         key = ("http-proxy", self._proxyEndpoint)
